@@ -6,12 +6,18 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Net.Http;
+using System.Net.Http.Json;
 using Azure;
 using Azure.AI.OpenAI;
 using ManagedCommon;
 using Microsoft.PowerToys.Settings.UI.Library;
 using Microsoft.PowerToys.Telemetry;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using ReverseMarkdown;
 using Windows.Security.Credentials;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace AdvancedPaste.Helpers
 {
@@ -112,13 +118,33 @@ Output:
             int apiRequestStatus = (int)HttpStatusCode.OK;
             try
             {
-                aiResponse = this.GetAICompletion(systemInstructions, userMessage);
-            }
-            catch (Azure.RequestFailedException error)
-            {
-                Logger.LogError("GetAICompletion failed", error);
-                PowerToysTelemetry.Log.WriteEvent(new Telemetry.AdvancedPasteGenerateCustomErrorEvent(error.Message));
-                apiRequestStatus = error.Status;
+                JObject request = JObject.FromObject(new
+                {
+                    model = _openAIKey,
+                    system = systemInstructions,
+                    prompt = userMessage,
+                    options = new
+                    {
+                        temperature = 0.01f,
+                    },
+                    stream = false,
+                });
+
+                using HttpClient client = new();
+                var task = client.PostAsync("http://localhost:11434/api/generate", new StringContent(request.ToString()));
+                task.Wait();
+                var text = task.Result.Content.ReadAsStringAsync();
+                text.Wait();
+                JObject o = JObject.Parse(text.Result);
+                aiResponse = o.Value<string>("response");
+
+                var error = o.Value<string>("error");
+                if (error != null)
+                {
+                    aiResponse = "Error: " + error + "\nRequest: " + request.ToString();
+                }
+
+                // aiResponse = this.GetAICompletion(systemInstructions, userMessage);
             }
             catch (Exception error)
             {
