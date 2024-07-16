@@ -16,7 +16,6 @@ using CommunityToolkit.Mvvm.Input;
 using ManagedCommon;
 using Microsoft.PowerToys.Settings.UI.Library;
 using Microsoft.UI.Dispatching;
-using Microsoft.UI.Xaml;
 using Microsoft.Win32;
 using Windows.ApplicationModel.DataTransfer;
 using WinUIEx;
@@ -26,12 +25,11 @@ namespace AdvancedPaste.ViewModels
     public partial class OptionsViewModel : ObservableObject
     {
         private readonly DispatcherQueue _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
+        private readonly IUserSettings _userSettings;
 
         private App app = App.Current as App;
 
         private AICompletionsHelper aiHelper;
-
-        private UserSettings _userSettings;
 
         public DataPackageView ClipboardData { get; set; }
 
@@ -51,10 +49,10 @@ namespace AdvancedPaste.ViewModels
         [NotifyPropertyChangedFor(nameof(InputTxtBoxErrorText))]
         private int _apiRequestStatus;
 
-        public OptionsViewModel()
+        public OptionsViewModel(IUserSettings userSettings)
         {
             aiHelper = new AICompletionsHelper();
-            _userSettings = new UserSettings();
+            _userSettings = userSettings;
 
             IsCustomAIEnabled = IsClipboardDataText && aiHelper.IsAIEnabled;
 
@@ -81,32 +79,40 @@ namespace AdvancedPaste.ViewModels
         {
             GetClipboardData();
 
-            var openAIKey = AICompletionsHelper.LoadOpenAIKey();
-            var currentKey = aiHelper.GetKey();
-            bool keyChanged = openAIKey != currentKey;
-
-            if (keyChanged)
+            if (PowerToys.GPOWrapper.GPOWrapper.GetAllowedAdvancedPasteOnlineAIModelsValue() == PowerToys.GPOWrapper.GpoRuleConfigured.Disabled)
             {
-                app.GetMainWindow().StartLoading();
-
-                Task.Run(() =>
-                {
-                    aiHelper.SetOpenAIKey(openAIKey);
-                }).ContinueWith(
-                    (t) =>
-                {
-                    _dispatcherQueue.TryEnqueue(() =>
-                    {
-                        app.GetMainWindow().FinishLoading(aiHelper.IsAIEnabled);
-                        OnPropertyChanged(nameof(InputTxtBoxPlaceholderText));
-                        IsCustomAIEnabled = IsClipboardDataText && aiHelper.IsAIEnabled;
-                    });
-                },
-                    TaskScheduler.Default);
+                IsCustomAIEnabled = false;
+                OnPropertyChanged(nameof(InputTxtBoxPlaceholderText));
             }
             else
             {
-                IsCustomAIEnabled = IsClipboardDataText && aiHelper.IsAIEnabled;
+                var openAIKey = AICompletionsHelper.LoadOpenAIKey();
+                var currentKey = aiHelper.GetKey();
+                bool keyChanged = openAIKey != currentKey;
+
+                if (keyChanged)
+                {
+                    app.GetMainWindow().StartLoading();
+
+                    Task.Run(() =>
+                    {
+                        aiHelper.SetOpenAIKey(openAIKey);
+                    }).ContinueWith(
+                        (t) =>
+                        {
+                            _dispatcherQueue.TryEnqueue(() =>
+                            {
+                                app.GetMainWindow().FinishLoading(aiHelper.IsAIEnabled);
+                                OnPropertyChanged(nameof(InputTxtBoxPlaceholderText));
+                                IsCustomAIEnabled = IsClipboardDataText && aiHelper.IsAIEnabled;
+                            });
+                        },
+                        TaskScheduler.Default);
+                }
+                else
+                {
+                    IsCustomAIEnabled = IsClipboardDataText && aiHelper.IsAIEnabled;
+                }
             }
 
             ClipboardHistoryEnabled = IsClipboardHistoryEnabled();
@@ -146,7 +152,11 @@ namespace AdvancedPaste.ViewModels
             {
                 app.GetMainWindow().ClearInputText();
 
-                if (!aiHelper.IsAIEnabled)
+                if (PowerToys.GPOWrapper.GPOWrapper.GetAllowedAdvancedPasteOnlineAIModelsValue() == PowerToys.GPOWrapper.GpoRuleConfigured.Disabled)
+                {
+                    return ResourceLoaderInstance.ResourceLoader.GetString("OpenAIGpoDisabled");
+                }
+                else if (!aiHelper.IsAIEnabled)
                 {
                     return ResourceLoaderInstance.ResourceLoader.GetString("OpenAINotConfigured");
                 }

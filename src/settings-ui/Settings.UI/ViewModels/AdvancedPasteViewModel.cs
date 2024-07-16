@@ -32,6 +32,8 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
 
         private GpoRuleConfigured _enabledGpoRuleConfiguration;
         private bool _enabledStateIsGPOConfigured;
+        private GpoRuleConfigured _onlineAIModelsGpoRuleConfiguration;
+        private bool _onlineAIModelsDisallowedByGPO;
         private bool _isEnabled;
 
         private Func<string, int> SendConfigMSG { get; }
@@ -80,6 +82,15 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
             {
                 _isEnabled = GeneralSettingsConfig.Enabled.AdvancedPaste;
             }
+
+            _onlineAIModelsGpoRuleConfiguration = GPOWrapper.GetAllowedAdvancedPasteOnlineAIModelsValue();
+            if (_onlineAIModelsGpoRuleConfiguration == GpoRuleConfigured.Disabled)
+            {
+                _onlineAIModelsDisallowedByGPO = true;
+
+                // disable AI if it was enabled
+                DisableAI();
+            }
         }
 
         public bool IsEnabled
@@ -97,6 +108,8 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
                 {
                     _isEnabled = value;
                     OnPropertyChanged(nameof(IsEnabled));
+                    OnPropertyChanged(nameof(ShowOnlineAIModelsGpoConfiguredInfoBar));
+                    OnPropertyChanged(nameof(ShowClipboardHistoryIsGpoConfiguredInfoBar));
 
                     // Set the status of AdvancedPaste in the general settings
                     GeneralSettingsConfig.Enabled.AdvancedPaste = value;
@@ -124,11 +137,21 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
             return cred is not null;
         }
 
-        public bool IsOpenAIEnabled => OpenAIKeyExists();
+        public bool IsOpenAIEnabled => OpenAIKeyExists() && !IsOnlineAIModelsDisallowedByGPO;
 
         public bool IsEnabledGpoConfigured
         {
             get => _enabledStateIsGPOConfigured;
+        }
+
+        public bool IsOnlineAIModelsDisallowedByGPO
+        {
+            get => _onlineAIModelsDisallowedByGPO || _enabledGpoRuleConfiguration == GpoRuleConfigured.Disabled;
+        }
+
+        public bool ShowOnlineAIModelsGpoConfiguredInfoBar
+        {
+            get => _onlineAIModelsDisallowedByGPO && _isEnabled;
         }
 
         private bool IsClipboardHistoryEnabled()
@@ -193,6 +216,11 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
         public bool ClipboardHistoryDisabledByGPO
         {
             get => IsClipboardHistoryDisabledByGPO();
+        }
+
+        public bool ShowClipboardHistoryIsGpoConfiguredInfoBar
+        {
+            get => IsClipboardHistoryDisabledByGPO() && _isEnabled;
         }
 
         public HotkeySettings AdvancedPasteUIShortcut
@@ -276,6 +304,19 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
             }
         }
 
+        public bool CloseAfterLosingFocus
+        {
+            get => _advancedPasteSettings.Properties.CloseAfterLosingFocus;
+            set
+            {
+                if (value != _advancedPasteSettings.Properties.CloseAfterLosingFocus)
+                {
+                    _advancedPasteSettings.Properties.CloseAfterLosingFocus = value;
+                    NotifySettingsChanged();
+                }
+            }
+        }
+
         public bool IsConflictingCopyShortcut
         {
             get
@@ -300,17 +341,19 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
         {
             // Using InvariantCulture as this is an IPC message
             SendConfigMSG(
-                   string.Format(
-                       CultureInfo.InvariantCulture,
-                       "{{ \"powertoys\": {{ \"{0}\": {1} }} }}",
-                       AdvancedPasteSettings.ModuleName,
-                       JsonSerializer.Serialize(_advancedPasteSettings)));
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{{ \"powertoys\": {{ \"{0}\": {1} }} }}",
+                    AdvancedPasteSettings.ModuleName,
+                    JsonSerializer.Serialize(_advancedPasteSettings)));
         }
 
         public void RefreshEnabledState()
         {
             InitializeEnabledValue();
             OnPropertyChanged(nameof(IsEnabled));
+            OnPropertyChanged(nameof(ShowOnlineAIModelsGpoConfiguredInfoBar));
+            OnPropertyChanged(nameof(ShowClipboardHistoryIsGpoConfiguredInfoBar));
         }
 
         protected virtual void Dispose(bool disposing)
@@ -334,18 +377,30 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
 
         internal void DisableAI()
         {
-            PasswordVault vault = new PasswordVault();
-            PasswordCredential cred = vault.Retrieve("https://platform.openai.com/api-keys", "PowerToys_AdvancedPaste_OpenAIKey");
-            vault.Remove(cred);
-            OnPropertyChanged(nameof(IsOpenAIEnabled));
+            try
+            {
+                PasswordVault vault = new PasswordVault();
+                PasswordCredential cred = vault.Retrieve("https://platform.openai.com/api-keys", "PowerToys_AdvancedPaste_OpenAIKey");
+                vault.Remove(cred);
+                OnPropertyChanged(nameof(IsOpenAIEnabled));
+            }
+            catch (Exception)
+            {
+            }
         }
 
         internal void EnableAI(string password)
         {
-            PasswordVault vault = new PasswordVault();
-            PasswordCredential cred = new PasswordCredential("https://platform.openai.com/api-keys", "PowerToys_AdvancedPaste_OpenAIKey", password);
-            vault.Add(cred);
-            OnPropertyChanged(nameof(IsOpenAIEnabled));
+            try
+            {
+                PasswordVault vault = new PasswordVault();
+                PasswordCredential cred = new PasswordCredential("https://platform.openai.com/api-keys", "PowerToys_AdvancedPaste_OpenAIKey", password);
+                vault.Add(cred);
+                OnPropertyChanged(nameof(IsOpenAIEnabled));
+            }
+            catch (Exception)
+            {
+            }
         }
     }
 }
